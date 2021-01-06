@@ -15,13 +15,25 @@ print("다음 기기로 학습합니다:", device)
 
 # COMMAND
 hidden_size = 512
-switch_ensemble = 1
+switch_ensemble = 0
 probability = 0.3
-wandb.init(project="ensemble_1", config = {"hidden_size": hidden_size, "switch_ensemble": switch_ensemble, "probability": probability})
+learning_rate = 0.1
+batch_size = 128
+# number of epochs to train the model
+n_epochs = 1000   # suggest training between 20-50 epochs
+wandb.init(project="intra-ensemble", entity='fust', config = {"hidden_size": hidden_size,
+                                                              "switch_ensemble": switch_ensemble,
+                                                              "probability": probability,
+                                                              "learning_rate": learning_rate,
+                                                              "batch_size": batch_size,
+                                                              "n_epochs": n_epochs})
 
 hidden_size = wandb.config.hidden_size
 switch_ensemble = wandb.config.switch_ensemble
-probability = 1- wandb.config.probability
+probability = 1-wandb.config.probability
+learning_rate = wandb.config.learning_rate
+n_epochs = wandb.config.n_epochs
+batch_size = wandb.config.batch_size
 mask2 = torch.bernoulli(probability*torch.ones(hidden_size, 784)).to(device)
 print(mask2.sum()/(hidden_size*784))
 
@@ -37,8 +49,6 @@ torch.manual_seed(777)
 if device == 'cuda':
     torch.cuda.manual_seed_all(777)
 
-# Hyperparameters
-batch_size = 16
 
 MNIST_data = np.load("/home/kdh/MNIST_data/MNIST_treated.npz")
 MNIST_data.files
@@ -73,9 +83,8 @@ class Net(nn.Module):
         super(Net, self).__init__()
         self.fc1 = nn.Linear(28 * 28, hidden_size)
 
-        self.fc2 = nn.Linear(hidden_size, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, 10)
         # linear layer (n_hidden -> 10)
-        self.fc3 = nn.Linear(hidden_size, 10)
         # dropout layer (p=0.2)
         # dropout prevents overfitting of data
         # self.dropout = nn.Dropout(0.2)
@@ -85,8 +94,7 @@ class Net(nn.Module):
         x = x.view(-1, 28 * 28)
         # add hidden layer, with relu activation function
         x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)
+        x = self.fc2(x)
         return x
 
 
@@ -103,12 +111,11 @@ print(model)
 criterion = nn.CrossEntropyLoss()
 
 # specify optimizer
-optimizer = torch.optim.SGD(model.parameters(), lr=0.5)
+optimizer = torch.optim.SGD(model.parameters(), momentum=0.9, lr=learning_rate)
 
-# number of epochs to train the model
-n_epochs = 100  # suggest training between 20-50 epochs
+
 epoch_counter = 0
-model.train()  # prep model for training
+#model.train()  # prep model for training
 
 
 print('ensemble? :', switch_ensemble)
@@ -117,6 +124,9 @@ for epoch in range(n_epochs):
     # monitor training loss
     torch.cuda.empty_cache()
     train_loss = 0.0
+    test_loss = 0.0
+    class_correct = list(0. for i in range(10))
+    class_total = list(0. for i in range(10))
     ###################
     # train the model #
     ###################
@@ -130,7 +140,7 @@ for epoch in range(n_epochs):
 #            print(weight)
 #            print(F.dropout(weight, p=probability)*(1-probability))
             model.fc1.weight = torch.nn.Parameter(F.dropout(weight_fc1, p=probability)*(1-probability))
-            model.fc2.weight = torch.nn.Parameter(F.dropout(weight_fc2, p=probability) * (1 - probability))
+            model.fc2.weight = torch.nn.Parameter(F.dropout(weight_fc2, p=probability)*(1-probability))
         # linear layer (n_hidden -> hidden_2)
         # clear the gradients of all optimized variables
         optimizer.zero_grad()
@@ -148,13 +158,34 @@ for epoch in range(n_epochs):
         # update running training loss
         train_loss += loss.item() * data.size(0)
 
+    for data, target in test_loader:
+        torch.cuda.empty_cache()
+        # forward pass: compute predicted outputs by passing inputs to the model
+        output = model(data)
+        # calculate the loss
+        loss = criterion(output, target)
+        # update test loss
+        test_loss += loss.item() * data.size(0)
+        # convert output probabilities to predicted class
+        _, pred = torch.max(output, 1)
+        # compare predictions to true label
+        correct = np.squeeze(pred.eq(target.data.view_as(pred)))
+        # calculate test accuracy for each object class
+        for i in range(10000):
+            label = target.data[i]
+            class_correct[label] += correct[i].item()
+            class_total[label] += 1
+    test_acc = 100. * np.sum(class_correct) / np.sum(class_total)
+
     # print training statistics
     # calculate average loss over an epoch
     train_loss = train_loss / len(train_loader.dataset)
-    wandb.log({"train_loss": train_loss, "n_epochs": n_epochs})
-    print('Epoch: {} \tTraining Loss: {:.6f}'.format(
+    test_loss = test_loss / len(test_loader.dataset)
+    wandb.log({"train_loss": train_loss, "test_loss": test_loss, "test_acc: ": test_acc, "n_epochs": n_epochs})
+    print('Epoch: {} \tTraining Loss: {:.6f} \tTest Loss: {:.6f}'.format(
         epoch + 1,
-        train_loss
+        train_loss,
+        test_loss
     ))
 
 # initialize lists to monitor test loss and accuracy
@@ -162,7 +193,7 @@ test_loss = 0.0
 class_correct = list(0. for i in range(10))
 class_total = list(0. for i in range(10))
 
-model.eval() # prep model for *evaluation*
+#model.eval() # prep model for *evaluation*
 
 for data, target in test_loader:
     torch.cuda.empty_cache()
