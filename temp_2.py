@@ -134,12 +134,16 @@ for epoch in range(n_epochs):
             with torch.no_grad():
                 mask1 = torch.bernoulli(probability * torch.ones(hidden_size, 784)).to(device)
                 mask2 = torch.bernoulli(probability * torch.ones(hidden_size, hidden_size)).to(device)
+                mask3 = torch.bernoulli(probability * torch.ones(10, hidden_size)).to(device)
                 a = torch.mul(mask1, model.fc1.weight)
                 b = torch.mul(mask2, model.fc2.weight)
-                c = torch.mul(1 - mask1, model.fc1.weight)
-                d = torch.mul(1 - mask2, model.fc2.weight)
+                c = torch.mul(mask3, model.fc3.weight)
+                d = torch.mul(1 - mask1, model.fc1.weight)
+                e = torch.mul(1 - mask2, model.fc2.weight)
+                f = torch.mul(1 - mask3, model.fc3.weight)
                 model.fc1.weight.data = a
                 model.fc2.weight.data = b
+                model.fc3.weight.data = c
 
         optimizer.zero_grad()
         output = model(data)
@@ -156,9 +160,9 @@ for epoch in range(n_epochs):
         # print("#2", (model.fc1.weight.sum()))
         # update running training loss
         if switch_ensemble is True:
-            model.fc1.weight.data = model.fc1.weight.data + c
-            model.fc2.weight.data = model.fc2.weight.data + d
-
+            model.fc1.weight.data = model.fc1.weight.data + d
+            model.fc2.weight.data = model.fc2.weight.data + e
+            model.fc3.weight.data = model.fc3.weight.data + f
         train_loss += loss.item() * data.size(0)
 
     for data, target in test_loader:
@@ -232,3 +236,6 @@ print('\nTest Accuracy (Overall): %2d%% (%2d/%2d)' % (
     100. * np.sum(class_correct) / np.sum(class_total),
     np.sum(class_correct), np.sum(class_total)))
 wandb.log({"test_err": 100 - test_acc})
+
+torch.save(model.state_dict(), '/home/gidia/anaconda3/envs/myenv/projects/Ensemble_git/models/temp2_model_lr_'
+           +str(wandb.config.learning_rate)+'_ep_'+str(wandb.config.n_epochs)+'_p_'+str(wandb.config.probability))

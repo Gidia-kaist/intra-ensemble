@@ -232,3 +232,6 @@ print('\nTest Accuracy (Overall): %2d%% (%2d/%2d)' % (
     100. * np.sum(class_correct) / np.sum(class_total),
     np.sum(class_correct), np.sum(class_total)))
 wandb.log({"test_err": 100 - test_acc})
+
+torch.save(model.state_dict(), '/home/gidia/anaconda3/envs/myenv/projects/Ensemble_git/models/temp3_model_lr_'
+           +str(wandb.config.learning_rate)+'_ep_'+str(wandb.config.n_epochs)+'_p_'+str(wandb.config.probability))
