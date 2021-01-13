@@ -24,7 +24,7 @@ switch_ensemble = 1
 probability = 0.5
 learning_rate = 0.001
 batch_size = 128
-
+Z = 1000
 
 n_epochs = 10
 wandb.init(project="intra-ensemble", entity='fust', config={"hidden_size": hidden_size,
@@ -86,10 +86,34 @@ class Net(nn.Module):
         x = F.max_pool2d(x, 2, 2)
         # flatten
         x = x.view(-1, 5 * 5 * 50)
-        x = F.relu(self.fc1(x))
-        # x = self.dropout1(x)
-        x = self.fc2(x)
-        return x
+
+        if switch_ensemble is True and inference is True:
+            mean = probability * torch.matmul(x, torch.transpose(self.fc1.weight.data, 0, 1))
+            std = torch.sqrt(probability * (1 - probability) * torch.matmul(x ** 2,
+                                                                            torch.transpose(self.fc1.weight.data ** 2,
+                                                                                            0, 1)))
+            tmp = torch.normal(mean, std)
+            for i in range(Z - 1):
+                tmp += torch.normal(mean, std)
+            x = tmp / Z
+            x = F.relu(x)
+
+            mean = probability * torch.matmul(x, torch.transpose(self.fc2.weight.data, 0, 1))
+            std = torch.sqrt(probability * (1 - probability) * torch.matmul(x ** 2,
+                                                                            torch.transpose(self.fc2.weight.data ** 2,
+                                                                                            0, 1)))
+            tmp = torch.normal(mean, std)
+            for i in range(Z - 1):
+                tmp += torch.normal(mean, std)
+            x = tmp / Z
+
+            return x
+
+        else:
+            x = F.relu(self.fc1(x))
+            # x = self.dropout1(x)
+            x = self.fc2(x)
+            return x
 
 
 model = Net()
@@ -118,7 +142,7 @@ for epoch in range(n_epochs):
     ###################
     # train the model #
     ###################
-
+    inference = False
     for data, target in train_loader:
         data, target = data.to(device), target.to(device)
 
@@ -147,7 +171,7 @@ for epoch in range(n_epochs):
             model.fc2.weight.data = model.fc2.weight.data + torch.mul(1 - mask2, model.fc2.weight)
             # model.fc3.weight.data = model.fc3.weight.data + torch.mul(1 - mask3, model.fc3.weight)
 
-
+    inference = True
     with torch.no_grad():
         for data, target in test_loader:
             data, target = data.to(device), target.to(device)
