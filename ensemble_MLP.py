@@ -17,10 +17,11 @@ print("다음 기기로 학습합니다:", device)
 hidden_size = 1024
 switch_ensemble = 1
 probability = 0.5
-learning_rate = 0.1
-batch_size = 128
+learning_rate = 0.3
+batch_size = 16
+Z = 1000
 # number of epochs to train the model
-n_epochs = 500   # suggest training between 20-50 epochs
+n_epochs = 50   # suggest training between 20-50 epochs
 wandb.init(project="intra-ensemble", entity='fust', config = {"hidden_size": hidden_size,
                                                               "switch_ensemble": switch_ensemble,
                                                               "probability": probability,
@@ -30,12 +31,11 @@ wandb.init(project="intra-ensemble", entity='fust', config = {"hidden_size": hid
 
 hidden_size = wandb.config.hidden_size
 switch_ensemble = wandb.config.switch_ensemble
-probability = 1-wandb.config.probability
+probability = wandb.config.probability
+
 learning_rate = wandb.config.learning_rate
 n_epochs = wandb.config.n_epochs
 batch_size = wandb.config.batch_size
-mask2 = torch.bernoulli(probability*torch.ones(hidden_size, 784)).to(device)
-print(mask2.sum()/(hidden_size*784))
 
 
 if switch_ensemble == 1:
@@ -65,12 +65,16 @@ test_X = test_X.reshape((len(test_X), 1, 28, 28))
 
 train_X = torch.from_numpy(train_X).float().to(device)
 train_Y = torch.from_numpy(train_Y).long().to(device)
+train_X = train_X[0:500].to(device)
+train_Y = train_Y[0:500].to(device)
+
 
 test_X = torch.from_numpy(test_X).float().to(device)
 test_Y = torch.from_numpy(test_Y).long().to(device)
 
 test = TensorDataset(test_X, test_Y)
 train = TensorDataset(train_X, train_Y)
+
 
 test_loader = DataLoader(test, batch_size=10000)
 train_loader = DataLoader(train, batch_size=batch_size)
@@ -82,23 +86,42 @@ class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
         self.fc1 = nn.Linear(28 * 28, hidden_size)
-
-        self.fc2 = nn.Linear(hidden_size, hidden_size)
-        self.fc3 = nn.Linear(hidden_size, 10)
-
-        # linear layer (n_hidden -> 10)
-        # dropout layer (p=0.2)
-        # dropout prevents overfitting of data
-        # self.dropout = nn.Dropout(0.2)
+        self.fc2 = nn.Linear(hidden_size, 10)
 
     def forward(self, x):
         # flatten image input
         x = x.view(-1, 28 * 28)
         # add hidden layer, with relu activation function
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)
-        return x
+
+
+        if switch_ensemble is True and inference is True:
+            # fc1
+            mean = probability * torch.matmul(x, torch.transpose(self.fc1.weight.data, 0, 1))
+            std = torch.sqrt(probability * (1 - probability) * torch.matmul(x ** 2,
+                                                                            torch.transpose(self.fc1.weight.data ** 2,
+                                                                                            0, 1)))
+            tmp = torch.normal(mean, std)
+            for i in range(Z - 1):
+                tmp += torch.normal(mean, std)
+            x = tmp / Z
+            x = F.relu(x)
+
+            # fc2
+            mean = probability * torch.matmul(x, torch.transpose(self.fc2.weight.data, 0, 1))
+            std = torch.sqrt(probability * (1 - probability) * torch.matmul(x ** 2,
+                                                                            torch.transpose(self.fc2.weight.data ** 2,
+                                                                                            0, 1)))
+            tmp = torch.normal(mean, std)
+            for i in range(Z - 1):
+                tmp += torch.normal(mean, std)
+            x = tmp / Z
+
+            return x
+
+        else:
+            x = F.relu(self.fc1(x))
+            x = self.fc2(x)
+            return x
 
 
 
@@ -107,137 +130,82 @@ model = Net()
 model.cuda()
 print(model)
 
+running_loss_history = []
+running_correct_history = []
+validation_running_loss_history = []
+validation_running_correct_history = []
 
-## Specify loss and optimization functions
-
-# specify loss function
 criterion = nn.CrossEntropyLoss()
-
-# specify optimizer
-optimizer = torch.optim.SGD(model.parameters(), momentum=0.9, lr=learning_rate)
-
-
-epoch_counter = 0
-#model.train()  # prep model for training
-
-
+# optimizer = torch.optim.SGD(model.parameters(), momentum=0.9, lr=learning_rate)
+optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 print('ensemble? :', switch_ensemble)
-print('probability? :', 1-probability)
+print('probability? :', probability)
+print(len(train_loader))
 for epoch in range(n_epochs):
-    # monitor training loss
-    torch.cuda.empty_cache()
+
     train_loss = 0.0
-    test_loss = 0.0
-    class_correct = list(0. for i in range(10))
-    class_total = list(0. for i in range(10))
+    train_correct = 0.0
+    val_loss = 0.0
+    val_correct = 0.0
+
     ###################
     # train the model #
     ###################
-
+    inference = False
     for data, target in train_loader:
+        data, target = data.to(device), target.to(device)
 
         if switch_ensemble is True:
-            # print("Ensemble:", switch_ensemble)
+            with torch.no_grad():
+                mask1 = torch.bernoulli(probability * torch.ones(hidden_size, 784)).to(device)
+                mask2 = torch.bernoulli(probability * torch.ones(10, hidden_size)).to(device)
+                # mask3 = torch.bernoulli(probability * torch.ones(10, 512)).to(device)
+                model.fc1.weight.data = torch.mul(mask1, model.fc1.weight)
+                model.fc2.weight.data = torch.mul(mask2, model.fc2.weight)
+                # model.fc3.weight.data = torch.mul(mask3, model.fc3.weight)
 
-            print("#1", model.fc1.weight.data)
-            weight_fc1 = model.fc1.weight.data
-            weight_fc2 = model.fc2.weight.data
-#            print(weight_fc1.sum())
-#            print(weight)
-#            print(F.dropout(weight, p=probability)*(1-probability))
-            mask1 = torch.bernoulli(probability * torch.ones(hidden_size, 784)).to(device)
-            mask2 = torch.bernoulli(probability * torch.ones(hidden_size, hidden_size)).to(device)
-            model.fc1.weight.data = torch.mul(mask1, weight_fc1)
-            model.fc2.weight.data = torch.mul(mask2, weight_fc2)
-        # linear layer (n_hidden -> hidden_2)
-        # clear the gradients of all optimized variables
-#        print("#1", model.fc1.weight.data.sum())
-        print("#2", model.fc1.weight.data)
+        outputs = model(data)
+        loss = criterion(outputs, target)
+
         optimizer.zero_grad()
-        # forward pass: compute predicted outputs by passing inputs to the model
-        output = model(data)
-        if switch_ensemble is True:
-            model.fc1.weight.data = weight_fc1
-            model.fc2.weight.data = weight_fc2
-        print("#3", model.fc1.weight.data)
-        # calculate the loss
-        loss = criterion(output, target)
-        # backward pass: compute gradient of the loss with respect to model parameters
         loss.backward()
-        # perform a single optimization step (parameter update)
         optimizer.step()
-        print("#4", model.fc1.weight.data)
-        # update running training loss
-        train_loss += loss.item() * data.size(0)
+        _, preds = torch.max(outputs, 1)
 
-    for data, target in test_loader:
-        torch.cuda.empty_cache()
-        # forward pass: compute predicted outputs by passing inputs to the model
-        output = model(data)
-        # calculate the loss
-        loss = criterion(output, target)
-        # update test loss
-        val_loss += loss.item() * data.size(0)
-        # convert output probabilities to predicted class
-        _, pred = torch.max(output, 1)
-        # compare predictions to true label
-        correct = np.squeeze(pred.eq(target.data.view_as(pred)))
-        # calculate test accuracy for each object class
-        for i in range(10000):
-            label = target.data[i]
-            class_correct[label] += correct[i].item()
-            class_total[label] += 1
-    val_acc = 100. * np.sum(class_correct) / np.sum(class_total)
+        train_correct += torch.sum(preds == target.data)
+        train_loss += loss.item()
 
-    # print training statistics
-    # calculate average loss over an epoch
-    train_loss = train_loss / len(train_loader.dataset)
-    val_loss = val_loss / len(test_loader.dataset)
-    wandb.log({"train_loss": train_loss, "val_loss": val_loss, "val_err: ": 100 - val_acc, "n_epochs": n_epochs})
-    print('Epoch: {} \tTraining Loss: {:.6f} \tValidation Loss: {:.6f}'.format(
-        epoch + 1,
-        train_loss,
-        val_loss
-    ))
+        if switch_ensemble is True:
+            model.fc1.weight.data = model.fc1.weight.data + torch.mul(1 - mask1, model.fc1.weight)
+            model.fc2.weight.data = model.fc2.weight.data + torch.mul(1 - mask2, model.fc2.weight)
+            # model.fc3.weight.data = model.fc3.weight.data + torch.mul(1 - mask3, model.fc3.weight)
 
-# initialize lists to monitor test loss and accuracy
-test_loss = 0.0
-class_correct = list(0. for i in range(10))
-class_total = list(0. for i in range(10))
+    inference = False
+    with torch.no_grad():
+        for data, target in test_loader:
+            data, target = data.to(device), target.to(device)
 
-#model.eval() # prep model for *evaluation*
 
-for data, target in test_loader:
-    torch.cuda.empty_cache()
-    # forward pass: compute predicted outputs by passing inputs to the model
-    output = model(data)
-    # calculate the loss
-    loss = criterion(output, target)
-    # update test loss
-    test_loss += loss.item()*data.size(0)
-    # convert output probabilities to predicted class
-    _, pred = torch.max(output, 1)
-    # compare predictions to true label
-    correct = np.squeeze(pred.eq(target.data.view_as(pred)))
-    # calculate test accuracy for each object class
-    for i in range(10000):
-        label = target.data[i]
-        class_correct[label] += correct[i].item()
-        class_total[label] += 1
+            output = model(data)
+            loss = criterion(output, target)
 
-# calculate and print avg test loss
-test_loss = test_loss/len(test_loader.dataset)
-#wandb.log({"test_loss": test_loss})
-print('Test Loss: {:.6f}\n'.format(test_loss))
+            _, val_preds = torch.max(output, 1)
+            val_loss += loss.item() * len(data)
+            val_correct += torch.sum(val_preds == target.data)
 
-for i in range(10):
-    if class_total[i] > 0:
-        print('Test Accuracy of %5s: %2d%% (%2d/%2d)' % (
-            str(i), 100 * class_correct[i] / class_total[i],
-            np.sum(class_correct[i]), np.sum(class_total[i])))
 
-test_acc = 100. * np.sum(class_correct) / np.sum(class_total)
-print('\nTest Accuracy (Overall): %2d%% (%2d/%2d)' % (
-    100. * np.sum(class_correct) / np.sum(class_total),
-    np.sum(class_correct), np.sum(class_total)))
-#wandb.log({"test_acc": test_acc})
+    epoch_loss = train_loss / len(train_X)
+    epoch_acc = train_correct.float() / len(train_X)
+
+    running_loss_history.append(epoch_loss)
+    running_correct_history.append(epoch_acc)
+
+    val_epoch_loss = val_loss / len(test_X)
+    val_epoch_acc = val_correct.float() / len(test_X)
+    validation_running_loss_history.append(val_epoch_loss)
+    validation_running_correct_history.append(val_epoch_acc)
+
+    print("===================================================")
+    print("epoch: ", epoch + 1)
+    print("training loss: {:.5f}, acc: {:5f}".format(epoch_loss, epoch_acc))
+    print("validation loss: {:.5f}, acc: {:5f}".format(val_epoch_loss, val_epoch_acc))

@@ -21,7 +21,7 @@ print("다음 기기로 학습합니다:", device)
 # COMMAND
 hidden_size = 512
 switch_ensemble = 1
-probability = 0.5
+probability = 0.8
 learning_rate = 0.001
 batch_size = 128
 Z = 1000
@@ -131,7 +131,7 @@ validation_running_correct_history = []
 
 print('ensemble? :', switch_ensemble)
 print('probability? :', probability)
-
+print(len(train_loader))
 for epoch in range(n_epochs):
 
     train_loss = 0.0
@@ -187,6 +187,7 @@ for epoch in range(n_epochs):
 
     epoch_loss = train_loss / len(train_loader)
     epoch_acc = train_correct.float() / len(train_loader)
+
     running_loss_history.append(epoch_loss)
     running_correct_history.append(epoch_acc)
 
