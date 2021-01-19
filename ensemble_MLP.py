@@ -16,12 +16,12 @@ print("다음 기기로 학습합니다:", device)
 # COMMAND
 hidden_size = 1024
 switch_ensemble = 1
-probability = 0.5
-learning_rate = 0.3
-batch_size = 16
+probability = 0.7
+learning_rate = 0.1
+batch_size = 50
 Z = 1000
 # number of epochs to train the model
-n_epochs = 50   # suggest training between 20-50 epochs
+n_epochs = 100   # suggest training between 20-50 epochs
 wandb.init(project="intra-ensemble", entity='fust', config = {"hidden_size": hidden_size,
                                                               "switch_ensemble": switch_ensemble,
                                                               "probability": probability,
@@ -65,8 +65,8 @@ test_X = test_X.reshape((len(test_X), 1, 28, 28))
 
 train_X = torch.from_numpy(train_X).float().to(device)
 train_Y = torch.from_numpy(train_Y).long().to(device)
-train_X = train_X[0:500].to(device)
-train_Y = train_Y[0:500].to(device)
+train_X = train_X[0:300].to(device)
+train_Y = train_Y[0:300].to(device)
 
 
 test_X = torch.from_numpy(test_X).float().to(device)
@@ -136,8 +136,8 @@ validation_running_loss_history = []
 validation_running_correct_history = []
 
 criterion = nn.CrossEntropyLoss()
-# optimizer = torch.optim.SGD(model.parameters(), momentum=0.9, lr=learning_rate)
-optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+optimizer = torch.optim.SGD(model.parameters(), momentum=0.9, lr=learning_rate)
+# optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 print('ensemble? :', switch_ensemble)
 print('probability? :', probability)
 print(len(train_loader))
@@ -155,7 +155,7 @@ for epoch in range(n_epochs):
     for data, target in train_loader:
         data, target = data.to(device), target.to(device)
 
-        if switch_ensemble is True:
+        if switch_ensemble is True and epoch % 100 == 0:
             with torch.no_grad():
                 mask1 = torch.bernoulli(probability * torch.ones(hidden_size, 784)).to(device)
                 mask2 = torch.bernoulli(probability * torch.ones(10, hidden_size)).to(device)
@@ -175,12 +175,12 @@ for epoch in range(n_epochs):
         train_correct += torch.sum(preds == target.data)
         train_loss += loss.item()
 
-        if switch_ensemble is True:
+        if switch_ensemble is True and epoch % 100 == 0:
             model.fc1.weight.data = model.fc1.weight.data + torch.mul(1 - mask1, model.fc1.weight)
             model.fc2.weight.data = model.fc2.weight.data + torch.mul(1 - mask2, model.fc2.weight)
             # model.fc3.weight.data = model.fc3.weight.data + torch.mul(1 - mask3, model.fc3.weight)
 
-    inference = False
+    inference = True
     with torch.no_grad():
         for data, target in test_loader:
             data, target = data.to(device), target.to(device)
@@ -209,3 +209,5 @@ for epoch in range(n_epochs):
     print("epoch: ", epoch + 1)
     print("training loss: {:.5f}, acc: {:5f}".format(epoch_loss, epoch_acc))
     print("validation loss: {:.5f}, acc: {:5f}".format(val_epoch_loss, val_epoch_acc))
+
+    wandb.log({"train_loss": epoch_loss, "val_loss": val_epoch_loss, "val_acc": val_epoch_acc})
