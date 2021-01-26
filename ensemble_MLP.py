@@ -16,7 +16,7 @@ print("다음 기기로 학습합니다:", device)
 # COMMAND
 hidden_size = 1024
 switch_ensemble = 1
-probability = 0.6
+probability = 0.5
 learning_rate = 0.1
 batch_size = 50
 Z = 1000
@@ -152,10 +152,10 @@ for epoch in range(n_epochs):
     # train the model #
     ###################
     inference = False
-    for data, target in train_loader:
+    for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
 
-        if switch_ensemble is True and epoch % 5 == 0:
+        if switch_ensemble is True and (epoch*6+batch_idx) % 50 == 0:
             with torch.no_grad():
                 print("!")
                 mask1 = torch.bernoulli(probability * torch.ones(hidden_size, 784)).to(device)
@@ -179,7 +179,7 @@ for epoch in range(n_epochs):
         train_correct += torch.sum(preds == target.data)
         train_loss += loss.item()
 
-        if switch_ensemble is True and epoch % 5 == 0:
+        if switch_ensemble is True and (epoch*6+batch_idx) % 50 == 0:
             model.fc1.weight.data = model.fc1.weight.data + torch.mul(1 - mask1, temp_weight_fc1)
             model.fc2.weight.data = model.fc2.weight.data + torch.mul(1 - mask2, temp_weight_fc2)
             # model.fc3.weight.data = model.fc3.weight.data + torch.mul(1 - mask3, model.fc3.weight)
