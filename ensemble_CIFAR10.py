@@ -19,10 +19,10 @@ device = torch.device("cuda" if USE_CUDA else "cpu")  # GPU 사용 가능하면 
 print("다음 기기로 학습합니다:", device)
 
 # COMMAND
-hidden_size = 512
+hidden_size = 1024
 switch_ensemble = 1
-probability = 0.8
-learning_rate = 0.001
+probability = 0.7
+learning_rate = 0.01
 batch_size = 128
 Z = 1000
 
@@ -146,7 +146,7 @@ for epoch in range(n_epochs):
     for data, target in train_loader:
         data, target = data.to(device), target.to(device)
 
-        if switch_ensemble is True:
+        if switch_ensemble is True and epoch % 100 == 0:
             with torch.no_grad():
                 mask1 = torch.bernoulli(probability * torch.ones(500, 5 * 5 * 50)).to(device)
                 mask2 = torch.bernoulli(probability * torch.ones(10, 500)).to(device)
